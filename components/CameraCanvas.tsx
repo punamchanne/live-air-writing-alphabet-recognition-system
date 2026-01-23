@@ -1,0 +1,293 @@
+'use client';
+
+import { useEffect, useRef, useState } from 'react';
+import { Point } from '@/lib/types';
+
+interface CameraCanvasProps {
+    onDrawingUpdate: (points: Point[]) => void;
+}
+
+export default function CameraCanvas({ onDrawingUpdate }: CameraCanvasProps) {
+    const videoRef = useRef<HTMLVideoElement>(null);
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+    const drawingCanvasRef = useRef<HTMLCanvasElement>(null);
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+
+    const drawingPoints = useRef<Point[]>([]);
+    const [isDrawingState, setIsDrawingState] = useState(false);
+    const drawingHoldCounter = useRef(0);
+    const MAX_HOLD_FRAMES = 8; // Keep drawing for 8 frames even if tracking is lost
+    const handsRef = useRef<any>(null);
+    const cameraRef = useRef<any>(null);
+
+    useEffect(() => {
+        const initializeMediaPipe = async () => {
+            try {
+                if (!videoRef.current || !canvasRef.current || !drawingCanvasRef.current) return;
+
+                // Dynamically import MediaPipe modules (client-side only)
+                const { Hands } = await import('@mediapipe/hands');
+                const { Camera } = await import('@mediapipe/camera_utils');
+
+                // Initialize MediaPipe Hands
+                const hands = new Hands({
+                    locateFile: (file: string) => {
+                        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+                    }
+                });
+
+                hands.setOptions({
+                    maxNumHands: 1,
+                    modelComplexity: 1,
+                    minDetectionConfidence: 0.5,
+                    minTrackingConfidence: 0.5
+                });
+
+                hands.onResults(onResults);
+                handsRef.current = hands;
+
+                // Initialize camera
+                const camera = new Camera(videoRef.current, {
+                    onFrame: async () => {
+                        if (videoRef.current && handsRef.current) {
+                            await handsRef.current.send({ image: videoRef.current });
+                        }
+                    },
+                    width: 640,
+                    height: 480
+                });
+
+                await camera.start();
+                cameraRef.current = camera;
+                setIsLoading(false);
+
+            } catch (err: any) {
+                console.error('Error initializing MediaPipe:', err);
+                let message = 'Failed to initialize camera. Please ensure camera permissions are granted.';
+
+                if (err.name === 'NotReadableError' || err.message?.includes('Device in use')) {
+                    message = 'Camera is already in use by another application or browser tab. Please close other camera apps (Zoom, Teams, etc.) or tabs and refresh.';
+                } else if (err.name === 'NotAllowedError') {
+                    message = 'Camera access was denied. Please allow camera permissions in your browser settings and refresh.';
+                }
+
+                setError(message);
+                setIsLoading(false);
+            }
+        };
+
+        initializeMediaPipe();
+
+        return () => {
+            if (cameraRef.current) {
+                cameraRef.current.stop();
+            }
+        };
+    }, []);
+
+    const isIndexFingerUp = (landmarks: any) => {
+        // Landmark indices: 5 (MCP), 6 (PIP), 7 (DIP), 8 (TIP)
+        const indexUp = landmarks[8].y < landmarks[7].y && landmarks[8].y < landmarks[5].y;
+
+        // Leniency: Middle finger is down relative to its own PIP, or Index is much higher
+        const middleDown = landmarks[12].y > landmarks[10].y;
+
+        // Relative distance check (distance from wrist)
+        const wrist = landmarks[0];
+        const d = (l: any) => Math.sqrt(Math.pow(l.x - wrist.x, 2) + Math.pow(l.y - wrist.y, 2));
+
+        return indexUp && (middleDown || d(landmarks[8]) > d(landmarks[12]) * 1.15);
+    };
+
+    const onResults = (results: any) => {
+        if (!canvasRef.current || !drawingCanvasRef.current) return;
+
+        const canvasCtx = canvasRef.current.getContext('2d');
+        const drawingCtx = drawingCanvasRef.current.getContext('2d');
+
+        if (!canvasCtx || !drawingCtx) return;
+
+        // Draw video feed on both canvases for better UX
+        canvasCtx.save();
+        canvasCtx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+        canvasCtx.drawImage(results.image, 0, 0, canvasRef.current.width, canvasRef.current.height);
+
+        drawingCtx.clearRect(0, 0, drawingCanvasRef.current.width, drawingCanvasRef.current.height);
+        drawingCtx.drawImage(results.image, 0, 0, drawingCanvasRef.current.width, drawingCanvasRef.current.height);
+
+        // Redraw the drawing path with soft curves (Quadratic Bezier)
+        if (drawingPoints.current.length > 2) {
+            drawingCtx.strokeStyle = '#00ff00';
+            drawingCtx.lineWidth = 6;
+            drawingCtx.lineCap = 'round';
+            drawingCtx.lineJoin = 'round';
+            drawingCtx.shadowColor = '#00ff00';
+            drawingCtx.shadowBlur = 15;
+
+            drawingCtx.beginPath();
+            drawingCtx.moveTo(drawingPoints.current[0].x, drawingPoints.current[0].y);
+
+            // Use middle points as control points for quadratic curves
+            for (let i = 1; i < drawingPoints.current.length - 2; i++) {
+                const xc = (drawingPoints.current[i].x + drawingPoints.current[i + 1].x) / 2;
+                const yc = (drawingPoints.current[i].y + drawingPoints.current[i + 1].y) / 2;
+                drawingCtx.quadraticCurveTo(drawingPoints.current[i].x, drawingPoints.current[i].y, xc, yc);
+            }
+
+            // For the last 2 points
+            const last = drawingPoints.current.length - 1;
+            drawingCtx.quadraticCurveTo(
+                drawingPoints.current[last - 1].x,
+                drawingPoints.current[last - 1].y,
+                drawingPoints.current[last].x,
+                drawingPoints.current[last].y
+            );
+
+            drawingCtx.stroke();
+            drawingCtx.shadowBlur = 0;
+        } else if (drawingPoints.current.length > 0) {
+            // Fallback for very few points
+            drawingCtx.fillStyle = '#00ff00';
+            drawingCtx.beginPath();
+            drawingCtx.arc(drawingPoints.current[0].x, drawingPoints.current[0].y, 3, 0, 2 * Math.PI);
+            drawingCtx.fill();
+        }
+
+        // Process Hand Landmarks
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            const landmarks = results.multiHandLandmarks[0];
+            const indexFingerTip = landmarks[8];
+
+            const rawX = indexFingerTip.x * drawingCanvasRef.current.width;
+            const rawY = indexFingerTip.y * drawingCanvasRef.current.height;
+
+            // Point Smoothing (Exponential Smoothing / Low-pass filter)
+            let x = rawX;
+            let y = rawY;
+            if (drawingPoints.current.length > 0) {
+                const lastPoint = drawingPoints.current[drawingPoints.current.length - 1];
+                const smoothing = 0.45; // Balance between smoothness and lag
+                x = lastPoint.x * smoothing + rawX * (1 - smoothing);
+                y = lastPoint.y * smoothing + rawY * (1 - smoothing);
+            }
+
+            // Check if we should be drawing based on gesture
+            const isGestureActive = isIndexFingerUp(landmarks);
+
+            // Smoothing/Debounce logic: Prevent broken lines
+            if (isGestureActive) {
+                drawingHoldCounter.current = MAX_HOLD_FRAMES; // Reset hold
+                if (!isDrawingState) setIsDrawingState(true);
+            } else {
+                if (drawingHoldCounter.current > 0) {
+                    drawingHoldCounter.current--;
+                } else {
+                    if (isDrawingState) setIsDrawingState(false);
+                }
+            }
+
+            const shouldDraw = isGestureActive || drawingHoldCounter.current > 0;
+
+            // Visual feedback for tracking
+            canvasCtx.fillStyle = shouldDraw ? '#00ff00' : '#ffff00';
+            canvasCtx.beginPath();
+            canvasCtx.arc(x, y, 10, 0, 2 * Math.PI);
+            canvasCtx.fill();
+
+            // Only add points if we are in drawing mode (w/ buffer)
+            if (shouldDraw) {
+                const point: Point = { x, y, timestamp: Date.now() };
+                drawingPoints.current.push(point);
+                onDrawingUpdate([...drawingPoints.current]);
+
+                // Glowing dot on drawing canvas
+                drawingCtx.fillStyle = '#ff0000';
+                drawingCtx.shadowColor = '#ff3333';
+                drawingCtx.shadowBlur = 25;
+                drawingCtx.beginPath();
+                drawingCtx.arc(x, y, 9, 0, 2 * Math.PI);
+                drawingCtx.fill();
+                drawingCtx.shadowBlur = 0;
+            } else {
+                // Ghost cursor when not drawing
+                drawingCtx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+                drawingCtx.beginPath();
+                drawingCtx.arc(x, y, 7, 0, 2 * Math.PI);
+                drawingCtx.fill();
+            }
+        } else {
+            // If hand is totally gone, count down faster
+            if (drawingHoldCounter.current > 0) {
+                drawingHoldCounter.current--;
+            } else if (isDrawingState) {
+                setIsDrawingState(false);
+            }
+        }
+
+        canvasCtx.restore();
+    };
+
+    const clearDrawing = () => {
+        drawingPoints.current = [];
+        onDrawingUpdate([]);
+    };
+
+    return (
+        <div className="relative w-full max-w-2xl">
+            <video ref={videoRef} className="hidden" playsInline />
+
+            <canvas
+                ref={canvasRef}
+                width={640}
+                height={480}
+                className="absolute top-0 left-0 w-full h-auto rounded-lg opacity-30 pointer-events-none"
+            />
+
+            <canvas
+                ref={drawingCanvasRef}
+                width={640}
+                height={480}
+                className={`relative w-full h-auto rounded-[1.5rem] border-2 ${isDrawingState ? 'border-green-400 shadow-[0_0_20px_rgba(74,222,128,0.3)]' : 'border-gray-800'} transition-all duration-300`}
+            />
+
+            {isDrawingState && (
+                <div className="absolute top-4 left-4 bg-green-500/20 text-green-400 text-[10px] font-black px-3 py-1 rounded-full border border-green-500/40 animate-pulse backdrop-blur-md">
+                    STROKE STABILIZED ACTIVE
+                </div>
+            )}
+
+            <button
+                onClick={clearDrawing}
+                className="absolute bottom-4 right-4 px-6 py-2 bg-red-500 hover:bg-red-600 text-white rounded-full font-bold transition-all shadow-xl active:scale-95"
+            >
+                CLEAR CANVAS
+            </button>
+
+            {isLoading && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-80 rounded-lg">
+                    <div className="text-white text-center">
+                        <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-green-500 mx-auto mb-4"></div>
+                        <p className="text-lg font-semibold tracking-wide">INITIALIZING AIR-WRITING...</p>
+                    </div>
+                </div>
+            )}
+
+            {error && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-90 rounded-lg p-8">
+                    <div className="text-red-400 text-center max-w-md">
+                        <div className="text-4xl mb-4">⚠️</div>
+                        <p className="text-xl font-bold mb-2">Camera Access Error</p>
+                        <p className="text-gray-300">{error}</p>
+                        <button
+                            onClick={() => window.location.reload()}
+                            className="mt-6 px-6 py-2 bg-white text-black font-bold rounded-full hover:bg-gray-200"
+                        >
+                            REFRESH PAGE
+                        </button>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}

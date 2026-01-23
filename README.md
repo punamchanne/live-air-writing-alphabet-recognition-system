@@ -1,36 +1,79 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Aero Graph V.1: Live Air-Writing Alphabet Recognition System
 
-## Getting Started
+[![Next.js](https://img.shields.io/badge/Next.js-15-black?style=for-the-badge&logo=next.js)](https://nextjs.org/)
+[![MediaPipe](https://img.shields.io/badge/MediaPipe-Solutions-blue?style=for-the-badge&logo=google)](https://developers.google.com/mediapipe)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4-38B2AC?style=for-the-badge&logo=tailwind-css)](https://tailwindcss.com/)
 
-First, run the development server:
+**Aero Graph V.1** is a cutting-edge, real-time alphabet recognition system that allows users to write in the air using their index finger. Powered by MediaPipe's high-fidelity hand tracking and a custom rule-based neural interpretation engine, it translates physical gestures into digital characters instantly.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+---
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## ✨ Key Features
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- **🚀 Real-Time Gesture Tracking**: Low-latency index finger tracking using MediaPipe Hands.
+- **🧠 Neural Interpretation**: Specialized rule-based engine recognizing all 26 English alphabets (A-Z).
+- **🎨 Premium UI/UX**: Futuristic, dark-themed interface built with Tailwind CSS 4.
+- **⚡ Live Predictions**: Adaptive feedback loop updating every 300ms for seamless writing.
+- **📱 Responsive Design**: Works across various screen sizes with optimized camera windows.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+---
 
-## Learn More
+## 🛠️ Tech Stack
 
-To learn more about Next.js, take a look at the following resources:
+- **Frontend**: [Next.js 15+](https://nextjs.org/) (App Router)
+- **Language**: [TypeScript](https://www.typescriptlang.org/)
+- **Tracking**: [MediaPipe Hands](https://developers.google.com/mediapipe/solutions/vision/hand_landmarker)
+- **Styling**: [Tailwind CSS 4](https://tailwindcss.com/)
+- **State Management**: React Hooks (useState, useRef, useEffect)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+---
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## 🚀 Getting Started
 
-## Deploy on Vercel
+### Prerequisites
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- Node.js 18.x or later
+- A working webcam
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### Installation
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/your-username/aero-graph.git
+   cd aero-graph
+   ```
+
+2. **Install dependencies:**
+   ```bash
+   npm install
+   ```
+
+3. **Run the development server:**
+   ```bash
+   npm run dev
+   ```
+
+4. **Access the application:**
+   Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+---
+
+## 📖 How to Use
+
+1. **Permissions**: Grant camera access when prompted by the browser.
+2. **Setup**: Position yourself so your upper body and hands are clearly visible to the webcam.
+3. **Writing**: Use your **index finger** to "draw" letters in the air.
+4. **Recognition**: The system will highlight your path and display the predicted letter in the "Neural Interpretation" panel.
+5. **Clear**: Use the on-screen "Clear" button (if available) or wait for the system to auto-reset to start a new letter.
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
