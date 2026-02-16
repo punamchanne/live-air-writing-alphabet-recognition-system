@@ -12,10 +12,11 @@
 ## ✨ Key Features
 
 - **🚀 Real-Time Gesture Tracking**: Low-latency index finger tracking using MediaPipe Hands.
-- **🧠 Neural Interpretation**: Specialized rule-based engine recognizing all 26 English alphabets (A-Z).
-- **🎨 Premium UI/UX**: Futuristic, dark-themed interface built with Tailwind CSS 4.
-- **⚡ Live Predictions**: Adaptive feedback loop updating every 300ms for seamless writing.
-- **📱 Responsive Design**: Works across various screen sizes with optimized camera windows.
+- **🧠 Neural Engine (EMNIST)**: Integrated TensorFlow.js model recognizing **62 classes** (0-9, A-Z, a-z).
+- **👁️ Natural Unmirrored View**: Explicitly unmirrored camera and drawing for a more intuitive user experience.
+- **📱 Android/Mobile Optimized**: Fully responsive layout with touch-friendly controls.
+- **⚡ Dual-Mode Predictions**: Fast rule-based guesses followed by high-accuracy ML "Final Predictions".
+- **🎨 Futuristic UI**: Dark-themed, neon-accented interface with backdrop blur and glow effects.
 
 ---
 
