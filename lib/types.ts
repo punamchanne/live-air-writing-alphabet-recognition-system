@@ -15,6 +15,7 @@ export interface HandLandmark {
 export interface RecognitionResult {
   letter: string;
   confidence: number;
+  mode?: 'live' | 'final';
 }
 
 export interface DrawingData {

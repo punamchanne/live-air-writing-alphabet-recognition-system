@@ -13,6 +13,8 @@ export default function CameraCanvas({ onDrawingUpdate }: CameraCanvasProps) {
     const drawingCanvasRef = useRef<HTMLCanvasElement>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const lastMovementTime = useRef<number>(Date.now());
+    const PAUSE_THRESHOLD = 800; // 800ms pause triggers ML
 
     const drawingPoints = useRef<Point[]>([]);
     const [isDrawingState, setIsDrawingState] = useState(false);
@@ -108,21 +110,28 @@ export default function CameraCanvas({ onDrawingUpdate }: CameraCanvasProps) {
 
         if (!canvasCtx || !drawingCtx) return;
 
-        // Draw video feed on both canvases for better UX
+        // Draw video feed unmirrored (Natural View)
         canvasCtx.save();
         canvasCtx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+
+        // Explicitly unmirror by NOT using scale(-1, 1). 
+        // If results.image is mirrored by default, we flip it back.
+        // Most webcams/MediaPipe defaults can be flipped here:
+        canvasCtx.translate(canvasRef.current.width, 0);
+        canvasCtx.scale(-1, 1);
         canvasCtx.drawImage(results.image, 0, 0, canvasRef.current.width, canvasRef.current.height);
+        canvasCtx.restore();
 
         drawingCtx.clearRect(0, 0, drawingCanvasRef.current.width, drawingCanvasRef.current.height);
-        drawingCtx.drawImage(results.image, 0, 0, drawingCanvasRef.current.width, drawingCanvasRef.current.height);
+        // The background is provided by canvasRef which draws results.image
 
         // Redraw the drawing path with soft curves (Quadratic Bezier)
         if (drawingPoints.current.length > 2) {
-            drawingCtx.strokeStyle = '#00ff00';
-            drawingCtx.lineWidth = 6;
+            drawingCtx.strokeStyle = '#3b82f6'; // Professional blue
+            drawingCtx.lineWidth = 10;
             drawingCtx.lineCap = 'round';
             drawingCtx.lineJoin = 'round';
-            drawingCtx.shadowColor = '#00ff00';
+            drawingCtx.shadowColor = '#60a5fa';
             drawingCtx.shadowBlur = 15;
 
             drawingCtx.beginPath();
@@ -148,7 +157,7 @@ export default function CameraCanvas({ onDrawingUpdate }: CameraCanvasProps) {
             drawingCtx.shadowBlur = 0;
         } else if (drawingPoints.current.length > 0) {
             // Fallback for very few points
-            drawingCtx.fillStyle = '#00ff00';
+            drawingCtx.fillStyle = '#3b82f6';
             drawingCtx.beginPath();
             drawingCtx.arc(drawingPoints.current[0].x, drawingPoints.current[0].y, 3, 0, 2 * Math.PI);
             drawingCtx.fill();
@@ -159,7 +168,8 @@ export default function CameraCanvas({ onDrawingUpdate }: CameraCanvasProps) {
             const landmarks = results.multiHandLandmarks[0];
             const indexFingerTip = landmarks[8];
 
-            const rawX = indexFingerTip.x * drawingCanvasRef.current.width;
+            // If we are unmirroring the display (scale(-1, 1)), we must also unmirror the coordinates
+            const rawX = (1 - indexFingerTip.x) * drawingCanvasRef.current.width;
             const rawY = indexFingerTip.y * drawingCanvasRef.current.height;
 
             // Point Smoothing (Exponential Smoothing / Low-pass filter)
@@ -170,6 +180,12 @@ export default function CameraCanvas({ onDrawingUpdate }: CameraCanvasProps) {
                 const smoothing = 0.45; // Balance between smoothness and lag
                 x = lastPoint.x * smoothing + rawX * (1 - smoothing);
                 y = lastPoint.y * smoothing + rawY * (1 - smoothing);
+
+                // Movement check for pause detection
+                const dist = Math.sqrt(Math.pow(x - lastPoint.x, 2) + Math.pow(y - lastPoint.y, 2));
+                if (dist > 5) {
+                    lastMovementTime.current = Date.now();
+                }
             }
 
             // Check if we should be drawing based on gesture
@@ -202,7 +218,7 @@ export default function CameraCanvas({ onDrawingUpdate }: CameraCanvasProps) {
                 onDrawingUpdate([...drawingPoints.current]);
 
                 // Glowing dot on drawing canvas
-                drawingCtx.fillStyle = '#ff0000';
+                drawingCtx.fillStyle = '#3b82f6';
                 drawingCtx.shadowColor = '#ff3333';
                 drawingCtx.shadowBlur = 25;
                 drawingCtx.beginPath();
@@ -241,14 +257,14 @@ export default function CameraCanvas({ onDrawingUpdate }: CameraCanvasProps) {
                 ref={canvasRef}
                 width={640}
                 height={480}
-                className="absolute top-0 left-0 w-full h-auto rounded-lg opacity-30 pointer-events-none"
+                className="absolute top-0 left-0 w-full h-auto rounded-lg opacity-100 pointer-events-none"
             />
 
             <canvas
                 ref={drawingCanvasRef}
                 width={640}
                 height={480}
-                className={`relative w-full h-auto rounded-[1.5rem] border-2 ${isDrawingState ? 'border-green-400 shadow-[0_0_20px_rgba(74,222,128,0.3)]' : 'border-gray-800'} transition-all duration-300`}
+                className={`relative w-full h-auto rounded-[1.5rem] border-2 shadow-2xl transition-all duration-300 ${isDrawingState ? 'border-blue-500 shadow-blue-500/20' : 'border-gray-800'}`}
             />
 
             {isDrawingState && (
@@ -259,9 +275,9 @@ export default function CameraCanvas({ onDrawingUpdate }: CameraCanvasProps) {
 
             <button
                 onClick={clearDrawing}
-                className="absolute bottom-4 right-4 px-6 py-2 bg-red-500 hover:bg-red-600 text-white rounded-full font-bold transition-all shadow-xl active:scale-95"
+                className="absolute bottom-6 right-6 px-8 py-3 bg-red-500/80 hover:bg-red-600 text-white rounded-2xl font-black transition-all shadow-2xl active:scale-95 backdrop-blur-md border border-white/10 uppercase tracking-tighter text-xs"
             >
-                CLEAR CANVAS
+                Clear Canvas
             </button>
 
             {isLoading && (
