@@ -5,12 +5,14 @@ import { Point } from '@/lib/types';
 
 interface CameraCanvasProps {
     onDrawingUpdate: (points: Point[]) => void;
+    onHiddenCanvasUpdate?: (canvas: HTMLCanvasElement) => void;
 }
 
-export default function CameraCanvas({ onDrawingUpdate }: CameraCanvasProps) {
+export default function CameraCanvas({ onDrawingUpdate, onHiddenCanvasUpdate }: CameraCanvasProps) {
     const videoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const drawingCanvasRef = useRef<HTMLCanvasElement>(null);
+    const hiddenCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const lastMovementTime = useRef<number>(Date.now());
@@ -78,6 +80,18 @@ export default function CameraCanvas({ onDrawingUpdate }: CameraCanvasProps) {
                 setIsLoading(false);
             }
         };
+
+        // Initialize hidden inference canvas
+        if (!hiddenCanvasRef.current) {
+            const hc = document.createElement('canvas');
+            hc.width = 300; hc.height = 300;
+            const ctx = hc.getContext('2d');
+            if (ctx) {
+                ctx.fillStyle = 'black';
+                ctx.fillRect(0, 0, 300, 300);
+            }
+            hiddenCanvasRef.current = hc;
+        }
 
         initializeMediaPipe();
 
@@ -155,6 +169,32 @@ export default function CameraCanvas({ onDrawingUpdate }: CameraCanvasProps) {
 
             drawingCtx.stroke();
             drawingCtx.shadowBlur = 0;
+
+            // Mirror to HIDDEN CANVAS (White on Black for ML)
+            if (hiddenCanvasRef.current) {
+                const hcCtx = hiddenCanvasRef.current.getContext('2d');
+                if (hcCtx) {
+                    hcCtx.fillStyle = 'black';
+                    hcCtx.fillRect(0, 0, 300, 300);
+                    hcCtx.strokeStyle = 'white';
+                    hcCtx.lineWidth = 15;
+                    hcCtx.lineCap = 'round';
+                    hcCtx.lineJoin = 'round';
+                    hcCtx.beginPath();
+
+                    // Scale factor: internal drawing reflects 640x480, so we scale to 300x300
+                    const sx = 300 / drawingCanvasRef.current.width;
+                    const sy = 300 / drawingCanvasRef.current.height;
+
+                    hcCtx.moveTo(drawingPoints.current[0].x * sx, drawingPoints.current[0].y * sy);
+                    for (let i = 1; i < drawingPoints.current.length - 2; i++) {
+                        const xc = ((drawingPoints.current[i].x + drawingPoints.current[i + 1].x) / 2) * sx;
+                        const yc = ((drawingPoints.current[i].y + drawingPoints.current[i + 1].y) / 2) * sy;
+                        hcCtx.quadraticCurveTo(drawingPoints.current[i].x * sx, drawingPoints.current[i].y * sy, xc, yc);
+                    }
+                    hcCtx.stroke();
+                }
+            }
         } else if (drawingPoints.current.length > 0) {
             // Fallback for very few points
             drawingCtx.fillStyle = '#3b82f6';
@@ -216,6 +256,9 @@ export default function CameraCanvas({ onDrawingUpdate }: CameraCanvasProps) {
                 const point: Point = { x, y, timestamp: Date.now() };
                 drawingPoints.current.push(point);
                 onDrawingUpdate([...drawingPoints.current]);
+                if (onHiddenCanvasUpdate && hiddenCanvasRef.current) {
+                    onHiddenCanvasUpdate(hiddenCanvasRef.current);
+                }
 
                 // Glowing dot on drawing canvas
                 drawingCtx.fillStyle = '#3b82f6';
@@ -247,63 +290,111 @@ export default function CameraCanvas({ onDrawingUpdate }: CameraCanvasProps) {
     const clearDrawing = () => {
         drawingPoints.current = [];
         onDrawingUpdate([]);
+        if (hiddenCanvasRef.current) {
+            const ctx = hiddenCanvasRef.current.getContext('2d');
+            if (ctx) {
+                ctx.fillStyle = 'black';
+                ctx.fillRect(0, 0, 300, 300);
+            }
+        }
     };
 
     return (
-        <div className="relative w-full max-w-2xl">
+        <div className="relative w-full h-full overflow-hidden group/canvas bg-black">
             <video ref={videoRef} className="hidden" playsInline />
 
             <canvas
                 ref={canvasRef}
                 width={640}
                 height={480}
-                className="absolute top-0 left-0 w-full h-auto rounded-lg opacity-100 pointer-events-none"
+                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 max-w-full max-h-full object-contain pointer-events-none"
             />
 
             <canvas
                 ref={drawingCanvasRef}
                 width={640}
                 height={480}
-                className={`relative w-full h-auto rounded-[1.5rem] border-2 shadow-2xl transition-all duration-300 ${isDrawingState ? 'border-blue-500 shadow-blue-500/20' : 'border-gray-800'}`}
+                className={`relative top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 max-w-full max-h-full object-contain transition-all duration-700 ${isDrawingState ? 'shadow-[inset_0_0_100px_rgba(59,130,246,0.1)]' : ''}`}
             />
 
+            {/* Scannable Area HUD Overlays */}
+            <div className="absolute inset-0 pointer-events-none">
+                {/* Corners */}
+                <div className="absolute top-8 left-8 w-12 h-12 border-t-2 border-l-2 border-blue-500/40 rounded-tl-xl transition-all duration-500 group-hover/canvas:border-blue-400"></div>
+                <div className="absolute top-8 right-8 w-12 h-12 border-t-2 border-r-2 border-blue-500/40 rounded-tr-xl transition-all duration-500 group-hover/canvas:border-blue-400"></div>
+                <div className="absolute bottom-8 left-8 w-12 h-12 border-b-2 border-l-2 border-blue-500/40 rounded-bl-xl transition-all duration-500 group-hover/canvas:border-blue-400"></div>
+                <div className="absolute bottom-8 right-8 w-12 h-12 border-b-2 border-r-2 border-blue-500/40 rounded-br-xl transition-all duration-500 group-hover/canvas:border-blue-400"></div>
+
+                {/* Grid Scan Effect */}
+                <div className="absolute inset-0 opacity-[0.03] bg-[linear-gradient(to_right,#808080_1px,transparent_1px),linear-gradient(to_bottom,#808080_1px,transparent_1px)] bg-[size:40px_40px]"></div>
+
+                {/* Scanning Bar */}
+                {isDrawingState && (
+                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-blue-500 to-transparent animate-[scan_3s_linear_infinite] opacity-50"></div>
+                )}
+            </div>
+
             {isDrawingState && (
-                <div className="absolute top-4 left-4 bg-green-500/20 text-green-400 text-[10px] font-black px-3 py-1 rounded-full border border-green-500/40 animate-pulse backdrop-blur-md">
-                    STROKE STABILIZED ACTIVE
+                <div className="absolute top-8 left-1/2 -translate-x-1/2 glass px-4 py-2 rounded-xl flex items-center space-x-3 border-blue-500/30 animate-float">
+                    <div className="w-2 h-2 rounded-full bg-blue-500 animate-ping"></div>
+                    <span className="text-[10px] font-orbitron font-black text-blue-400 uppercase tracking-widest">
+                        Neural Stream Active
+                    </span>
                 </div>
             )}
 
-            <button
-                onClick={clearDrawing}
-                className="absolute bottom-6 right-6 px-8 py-3 bg-red-500/80 hover:bg-red-600 text-white rounded-2xl font-black transition-all shadow-2xl active:scale-95 backdrop-blur-md border border-white/10 uppercase tracking-tighter text-xs"
-            >
-                Clear Canvas
-            </button>
+            <div className="absolute bottom-8 right-8 flex items-center space-x-4">
+                <button
+                    onClick={clearDrawing}
+                    className="glass px-8 py-3 rounded-2xl font-orbitron font-black text-[10px] text-white uppercase tracking-[0.2em] border-white/5 hover:border-red-500/50 hover:bg-red-500/10 transition-all duration-500 group/btn overflow-hidden relative"
+                >
+                    <span className="relative z-10">Purge Memory</span>
+                    <div className="absolute inset-0 bg-red-500/0 group-hover/btn:bg-red-500/5 transition-all"></div>
+                </button>
+            </div>
 
             {isLoading && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-80 rounded-lg">
-                    <div className="text-white text-center">
-                        <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-green-500 mx-auto mb-4"></div>
-                        <p className="text-lg font-semibold tracking-wide">INITIALIZING AIR-WRITING...</p>
+                <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#020617]/95 backdrop-blur-3xl">
+                    <div className="text-center">
+                        <div className="relative w-24 h-24 mb-6 mx-auto">
+                            <div className="absolute inset-0 rounded-full border-2 border-blue-500/20"></div>
+                            <div className="absolute inset-0 rounded-full border-t-2 border-blue-500 animate-spin"></div>
+                            <div className="absolute inset-4 rounded-full border-2 border-purple-500/20"></div>
+                            <div className="absolute inset-4 rounded-full border-b-2 border-purple-500 animate-spin-reverse"></div>
+                        </div>
+                        <h3 className="text-xl font-orbitron font-black text-white tracking-tighter mb-2">INITIALIZING STUDIO</h3>
+                        <p className="text-[10px] font-black text-gray-500 uppercase tracking-[0.4em] animate-pulse">Syncing Neural Nodes...</p>
                     </div>
                 </div>
             )}
 
             {error && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-90 rounded-lg p-8">
-                    <div className="text-red-400 text-center max-w-md">
-                        <div className="text-4xl mb-4">⚠️</div>
-                        <p className="text-xl font-bold mb-2">Camera Access Error</p>
-                        <p className="text-gray-300">{error}</p>
+                <div className="absolute inset-0 z-50 flex items-center justify-center bg-red-950/90 backdrop-blur-2xl p-8">
+                    <div className="text-center max-w-sm">
+                        <div className="w-20 h-20 bg-red-500/20 rounded-3xl flex items-center justify-center mx-auto mb-6 border border-red-500/30">
+                            <span className="text-3xl">⚠️</span>
+                        </div>
+                        <h3 className="text-xl font-orbitron font-black text-white mb-2 uppercase">L-Sync Failure</h3>
+                        <p className="text-sm font-medium text-red-200/60 mb-8 leading-relaxed">{error}</p>
                         <button
                             onClick={() => window.location.reload()}
-                            className="mt-6 px-6 py-2 bg-white text-black font-bold rounded-full hover:bg-gray-200"
+                            className="w-full glass py-4 rounded-2xl font-orbitron font-black text-xs text-white uppercase tracking-widest border-white/10 hover:bg-white hover:text-black transition-all"
                         >
-                            REFRESH PAGE
+                            Hard Reboot System
                         </button>
                     </div>
                 </div>
             )}
-        </div>
+
+            <style jsx>{`
+                @keyframes scan {
+                    0% { transform: translateY(0); }
+                    100% { transform: translateY(480px); }
+                }
+                .animate-spin-reverse {
+                    animation: spin 3s linear infinite reverse;
+                }
+            `}</style>
+        </div >
     );
 }

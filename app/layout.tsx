@@ -1,20 +1,22 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Outfit, Orbitron } from "next/font/google"; // Modern & Futuristic fonts
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const outfit = Outfit({
   subsets: ["latin"],
+  variable: "--font-outfit",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const orbitron = Orbitron({
   subsets: ["latin"],
+  variable: "--font-orbitron",
+  display: 'swap',
 });
 
 export const metadata: Metadata = {
-  title: "Live Air-Writing Alphabet Recognition",
-  description: "Write letters in the air using your index finger and see real-time predictions powered by MediaPipe hand tracking",
+  title: "Aero Graph Pro | Neural Air-Writing Studio",
+  description: "Experience the future of gesture-to-text with Aero Graph's neural-link air-writing technology.",
+  viewport: "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover",
 };
 
 export default function RootLayout({
@@ -25,7 +27,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${outfit.variable} ${orbitron.variable} font-sans antialiased`}
       >
         {children}
       </body>

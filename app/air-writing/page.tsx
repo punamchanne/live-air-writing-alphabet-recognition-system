@@ -4,37 +4,96 @@ import { useState, useEffect, useRef } from 'react';
 import CameraCanvas from '@/components/CameraCanvas';
 import PredictionPanel from '@/components/PredictionPanel';
 import { Point, RecognitionResult } from '@/lib/types';
-import { AlphabetRecognizer } from '@/lib/recognizer';
 
 export default function AirWritingPage() {
     const [drawingPoints, setDrawingPoints] = useState<Point[]>([]);
-    const [prediction, setPrediction] = useState<RecognitionResult>({ letter: '?', confidence: 0, mode: 'live' });
-    const [allPredictions, setAllPredictions] = useState<RecognitionResult[]>([]);
+    const [prediction, setPrediction] = useState<RecognitionResult & { alternatives?: RecognitionResult[] }>({ letter: '?', confidence: 0, mode: 'live' });
+    const [alternatives, setAlternatives] = useState<RecognitionResult[]>([]);
     const [isProcessing, setIsProcessing] = useState(false);
 
-    const recognizerRef = useRef<AlphabetRecognizer>(new AlphabetRecognizer());
+    // Tuning parameters
+    const [strokeWeight, setStrokeWeight] = useState(12);
+    const [predictionDelay, setPredictionDelay] = useState(800);
+    const [diagImage, setDiagImage] = useState<string | null>(null);
+    const [hiddenCanvas, setHiddenCanvas] = useState<HTMLCanvasElement | null>(null);
+    const [showDebugVision, setShowDebugVision] = useState(false);
+    const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
     const lastPointCount = useRef(0);
+    const lastProcessedCount = useRef(0);
     const pauseTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-    // Live prediction loop - runs every 300ms
+    // Live prediction loop - shifted to PURE NEURAL
     useEffect(() => {
-        const recognitionInterval = setInterval(() => {
-            if (drawingPoints.length > 0 && !isProcessing && prediction.mode !== 'final') {
-                const results = recognizerRef.current.getAllResults(drawingPoints);
-                if (results.length > 0) {
-                    setPrediction({ ...results[0], mode: 'live' });
-                    setAllPredictions(results);
+        const recognitionInterval = setInterval(async () => {
+            // Only run if points have changed and we aren't already final or busy
+            if (drawingPoints.length > 5 &&
+                drawingPoints.length !== lastProcessedCount.current &&
+                !isProcessing &&
+                prediction.mode !== 'final') {
+
+                const canvas = document.querySelector('canvas:nth-of-type(2)') as HTMLCanvasElement;
+                if (!canvas) return;
+
+                try {
+                    const { preprocessCanvas } = await import('@/lib/preprocess');
+                    const { predictAlphabet } = await import('@/lib/model');
+                    const { AlphabetRecognizer } = await import('@/lib/recognizer');
+                    const recognizer = new AlphabetRecognizer();
+
+                    // USE HIDDEN CANVAS ONLY
+                    const source = hiddenCanvas || canvas;
+                    const tensor = await preprocessCanvas(source, drawingPoints, { strokeWidth: strokeWeight });
+
+                    // Capture live diagnostics...
+                    const data = await tensor.data();
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = 112; tempCanvas.height = 112;
+                    const ctx = tempCanvas.getContext('2d');
+                    if (ctx) {
+                        for (let i = 0; i < 28; i++) {
+                            for (let j = 0; j < 28; j++) {
+                                const val = data[i * 28 + j] * 255;
+                                ctx.fillStyle = `rgb(${val},${val},${val})`;
+                                ctx.fillRect(j * 4, i * 4, 4, 4);
+                            }
+                        }
+                        setDiagImage(tempCanvas.toDataURL());
+                    }
+
+                    const neuralResult = await predictAlphabet(tensor);
+                    const geometricResult = recognizer.recognize(drawingPoints);
+
+                    // BLENDING LOGIC: Geometric ($1) vs Neural
+                    // If geometric confidence is high (> 0.7), it's usually correct for shapes like W, S, O.
+                    let finalResult = neuralResult;
+
+                    if (geometricResult.confidence > 0.75) {
+                        // High confidence in geometry overrides valid neural
+                        finalResult = { ...geometricResult, mode: 'live', alternatives: neuralResult.alternatives };
+                    } else if (geometricResult.confidence > 0.5 && neuralResult.confidence < 0.6) {
+                        // If neural is unsure but geometry has a decent guess
+                        finalResult = { ...geometricResult, mode: 'live', alternatives: neuralResult.alternatives };
+                    }
+
+                    setPrediction(finalResult);
+                    setAlternatives(neuralResult.alternatives || []);
+                    lastProcessedCount.current = drawingPoints.length;
+
+                    // Cleanup live tensor to prevent memory pressure
+                    tensor.dispose();
+                } catch (err) {
+                    console.error('Live neural prediction failed:', err);
                 }
             }
-        }, 300);
+        }, 400); // Throttled to 400ms for stable neural processing
 
         return () => clearInterval(recognitionInterval);
-    }, [drawingPoints, isProcessing, prediction.mode]);
+    }, [drawingPoints, isProcessing, prediction.mode, strokeWeight, hiddenCanvas]);
 
-    // Final Prediction Logic - Triggered when points stop increasing for ~800ms
+    // Final Prediction Logic
     useEffect(() => {
         if (drawingPoints.length > 0 && drawingPoints.length === lastPointCount.current && !isProcessing && prediction.mode !== 'final') {
-            // Points haven't changed, start/continue pause timer
             if (!pauseTimerRef.current) {
                 pauseTimerRef.current = setTimeout(async () => {
                     const canvas = document.querySelector('canvas:nth-of-type(2)') as HTMLCanvasElement;
@@ -43,15 +102,45 @@ export default function AirWritingPage() {
                         try {
                             const { preprocessCanvas } = await import('@/lib/preprocess');
                             const { predictAlphabet } = await import('@/lib/model');
+                            const { AlphabetRecognizer } = await import('@/lib/recognizer');
+                            const recognizer = new AlphabetRecognizer();
 
-                            const tensor = await preprocessCanvas(canvas, drawingPoints);
-                            const result = await predictAlphabet(tensor);
+                            const source = hiddenCanvas || canvas;
+                            const tensor = await preprocessCanvas(source, drawingPoints, { strokeWidth: strokeWeight });
+                            const neuralResult = await predictAlphabet(tensor);
+                            const data = await tensor.data();
+                            const tempCanvas = document.createElement('canvas');
+                            tempCanvas.width = 112; tempCanvas.height = 112;
+                            const ctx = tempCanvas.getContext('2d');
+                            if (ctx) {
+                                for (let i = 0; i < 28; i++) {
+                                    for (let j = 0; j < 28; j++) {
+                                        const val = data[i * 28 + j] * 255;
+                                        ctx.fillStyle = `rgb(${val},${val},${val})`;
+                                        ctx.fillRect(j * 4, i * 4, 4, 4);
+                                    }
+                                }
+                                setDiagImage(tempCanvas.toDataURL());
+                            }
+                            const geometricResult = recognizer.recognize(drawingPoints);
 
-                            setPrediction({ ...result, mode: 'final' });
+                            let finalResult = neuralResult;
 
-                            // Auto-clear after 2 seconds
+                            // Stronger reliance on geometry for final result
+                            if (geometricResult.confidence > 0.7) {
+                                finalResult = { ...geometricResult, mode: 'final' };
+                            } else if (geometricResult.confidence > 0.5 && neuralResult.confidence < 0.6) {
+                                finalResult = { ...geometricResult, mode: 'final' };
+                            } else {
+                                finalResult = { ...neuralResult, mode: 'final' };
+                            }
+
+                            setPrediction(finalResult);
+                            setAlternatives(neuralResult.alternatives || []);
+
                             setTimeout(() => {
                                 handleClear();
+                                setDiagImage(null);
                             }, 2000);
                         } catch (err) {
                             console.error('Final prediction failed:', err);
@@ -59,25 +148,25 @@ export default function AirWritingPage() {
                             setIsProcessing(false);
                         }
                     }
-                }, 800);
+                }, predictionDelay);
             }
         } else {
-            // Points changed or already final, clear pause timer
             if (pauseTimerRef.current) {
                 clearTimeout(pauseTimerRef.current);
                 pauseTimerRef.current = null;
             }
         }
         lastPointCount.current = drawingPoints.length;
-    }, [drawingPoints, isProcessing, prediction.mode]);
+    }, [drawingPoints, isProcessing, prediction.mode, predictionDelay, strokeWeight]);
 
     const handleClear = () => {
         setDrawingPoints([]);
         setPrediction({ letter: '?', confidence: 0, mode: 'live' });
-        setAllPredictions([]);
+        setAlternatives([]);
+        lastProcessedCount.current = 0;
         const clearBtn = document.querySelector('button') as HTMLButtonElement;
         if (clearBtn && clearBtn.textContent?.includes('CLEAR')) {
-            clearBtn.click(); // Trigger the refs inside CameraCanvas
+            clearBtn.click();
         }
     };
 
@@ -86,72 +175,128 @@ export default function AirWritingPage() {
     };
 
     return (
-        <div className="min-h-screen bg-black">
-            {/* Header */}
-            <header className="border-b border-gray-800/50 bg-gray-900/10 backdrop-blur-2xl">
-                <div className="container mx-auto px-8 py-8 flex items-center justify-between">
+        <div className="h-[100dvh] flex flex-col bg-black overflow-hidden font-sans selection:bg-blue-500/30">
+            {/* Mobile-First Header */}
+            <header className="flex-none h-14 sm:h-16 glass border-b border-white/5 px-4 flex items-center justify-between z-50">
+                <div className="flex items-center space-x-3">
+                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
+                        <span className="text-white font-orbitron font-black text-sm italic">A</span>
+                    </div>
                     <div>
-                        <h1 className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-400 to-purple-500 tracking-tighter">
-                            AERO GRAPH V.1
+                        <h1 className="text-sm font-orbitron font-black tracking-tighter text-glow-blue uppercase">
+                            Aero <span className="text-blue-400">Pro</span>
                         </h1>
-                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-[0.4em] mt-2">Neural Air-Writing Intelligence</p>
                     </div>
-                    <div className="flex items-center bg-gray-900/80 px-4 py-2 rounded-full border border-gray-800">
-                        <span className="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse mr-3 shadow-[0_0_8px_#22c55e]"></span>
-                        <span className="text-[10px] font-bold text-gray-300 uppercase tracking-widest">System Synchronized</span>
+                </div>
+
+                <div className="flex items-center space-x-4">
+                    {/* Status Indicator */}
+                    <div className="flex items-center space-x-1.5 bg-black/40 px-2 py-1 rounded-full border border-white/5">
+                        <div className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_8px_#22c55e] animate-pulse"></div>
+                        <span className="text-[10px] font-orbitron text-gray-400 tracking-wider">LIVE</span>
                     </div>
+
+                    {/* Settings Button */}
+                    <button
+                        onClick={() => setIsSettingsOpen(true)}
+                        className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                    </button>
                 </div>
             </header>
 
-            {/* Main Content */}
-            <main className="container mx-auto px-4 sm:px-8 py-6 sm:py-10">
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12 items-start">
-                    {/* Left: Camera + Drawing Canvas */}
-                    <div className="space-y-6">
-                        <div className="bg-gray-900/20 rounded-[1.5rem] sm:rounded-[2.5rem] p-4 sm:p-10 border border-gray-800/50 backdrop-blur-md shadow-2xl">
-                            <h2 className="text-lg sm:text-xl font-bold text-gray-300 mb-6 sm:mb-8 flex items-center">
-                                <span className="w-6 h-6 sm:w-8 sm:h-8 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center mr-3 sm:mr-4 text-xs sm:text-base">01</span>
-                                Gesture Capture Window
-                            </h2>
-                            <CameraCanvas onDrawingUpdate={handleDrawingUpdate} />
-                        </div>
-                    </div>
+            {/* Main App Workspace - 100dvh Stack */}
+            <main className="flex-1 relative overflow-hidden flex flex-col">
 
-                    {/* Right: Live Prediction Panel */}
-                    <div className="space-y-6">
-                        <div className="flex items-center mb-2 sm:mb-4">
-                            <span className="w-6 h-6 sm:w-8 sm:h-8 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center mr-3 sm:mr-4 text-xs sm:text-base">02</span>
-                            <h2 className="text-lg sm:text-xl font-bold text-gray-300">Neural Interpretation</h2>
-                        </div>
-                        <PredictionPanel result={prediction} allPredictions={allPredictions} />
-                    </div>
-                </div>
+                {/* 1. Camera Section (Takes all available space) */}
+                <div className="flex-1 relative bg-black/50 z-10 flex items-center justify-center">
+                    <div className="w-full h-full relative">
+                        <CameraCanvas
+                            onDrawingUpdate={handleDrawingUpdate}
+                            onHiddenCanvasUpdate={setHiddenCanvas}
+                        />
 
-                {/* Supported Letters */}
-                <div className="mt-8 sm:mt-12 bg-gray-900/40 rounded-[1.5rem] sm:rounded-[2rem] p-6 sm:p-8 border border-gray-800/50 backdrop-blur-md overflow-x-auto">
-                    <h3 className="text-[10px] sm:text-sm font-black text-gray-500 uppercase tracking-[0.3em] mb-4 sm:mb-6 text-center">Supported Neural Patterns</h3>
-                    <div className="grid grid-cols-6 sm:grid-cols-11 gap-2 sm:gap-4 min-w-[300px]">
-                        {['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'].map((letter) => (
-                            <div
-                                key={letter}
-                                className="bg-black/60 rounded-lg p-2 text-center border border-gray-800 hover:border-blue-500 transition-all group hover:scale-110"
-                            >
-                                <span className="text-xs sm:text-sm font-black text-gray-400 group-hover:text-white">{letter}</span>
+                        {/* Hidden Canvas Overlay (Vision Mode) */}
+                        {showDebugVision && hiddenCanvas && (
+                            <div className="absolute top-4 right-4 z-[60] border border-cyan-500 rounded-lg overflow-hidden shadow-lg bg-black/90 w-32 h-32">
+                                <img src={hiddenCanvas.toDataURL()} className="w-full h-full opacity-80" />
+                                <div className="absolute bottom-0 w-full bg-cyan-500/20 text-[6px] text-cyan-400 text-center font-bold uppercase py-0.5">Neural Vision</div>
                             </div>
-                        ))}
+                        )}
+
+                        {/* Mobile Instruction Overlay */}
+                        {drawingPoints.length === 0 && (
+                            <div className="absolute bottom-8 left-0 w-full text-center pointer-events-none opacity-50">
+                                <p className="text-xs font-orbitron text-white uppercase tracking-[0.2em] animate-pulse">Draw in Air</p>
+                            </div>
+                        )}
                     </div>
                 </div>
-                <p className="text-gray-500 text-[10px] sm:text-sm mt-4 italic text-center sm:text-left">
-                    More characters added via EMNIST 62-class expansion.
-                </p>
+
+                {/* 2. Prediction Panel (Bottom Sheet) */}
+                <div className="flex-none bg-[#020617] border-t border-white/10 relative z-20 pb-safe">
+                    <div className="absolute -top-6 left-1/2 transform -translate-x-1/2 w-12 h-1.5 bg-white/20 rounded-full mb-2"></div>
+                    <PredictionPanel result={prediction} alternatives={alternatives} />
+                </div>
             </main>
 
-            {/* Footer */}
-            <footer className="border-t border-gray-800 mt-12 bg-black bg-opacity-50">
-                <div className="container mx-auto px-6 py-4 text-center text-gray-500 text-sm">
-                    <p>Live Air-Writing Alphabet Recognition System • Built with Next.js & MediaPipe</p>
+            {/* Settings Drawer (Overlay) */}
+            {isSettingsOpen && (
+                <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setIsSettingsOpen(false)}>
+                    <div className="absolute right-0 top-0 bottom-0 w-3/4 max-w-sm bg-[#0b1121] border-l border-white/10 p-6 shadow-2xl animate-in slide-in-from-right duration-300" onClick={e => e.stopPropagation()}>
+                        <div className="flex justify-between items-center mb-8">
+                            <h2 className="text-lg font-orbitron font-black text-white uppercase">Settings</h2>
+                            <button onClick={() => setIsSettingsOpen(false)} className="text-gray-400 hover:text-white">
+                                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                            </button>
+                        </div>
+
+                        <div className="space-y-8">
+                            {/* Neural Calibration Controls moved here */}
+                            <div className="space-y-4">
+                                <div className="flex justify-between text-xs font-bold text-gray-400 uppercase">
+                                    <span>Stroke Weight</span>
+                                    <span className="text-cyan-400">{strokeWeight}px</span>
+                                </div>
+                                <input
+                                    type="range" min="4" max="24" step="2"
+                                    value={strokeWeight}
+                                    onChange={(e) => setStrokeWeight(Number(e.target.value))}
+                                    className="w-full h-1 bg-white/10 rounded-full appearance-none accent-cyan-500"
+                                />
+                            </div>
+
+                            <div className="space-y-4">
+                                <div className="flex justify-between text-xs font-bold text-gray-400 uppercase">
+                                    <span>Delay</span>
+                                    <span className="text-cyan-400">{predictionDelay}ms</span>
+                                </div>
+                                <input
+                                    type="range" min="400" max="2000" step="200"
+                                    value={predictionDelay}
+                                    onChange={(e) => setPredictionDelay(Number(e.target.value))}
+                                    className="w-full h-1 bg-white/10 rounded-full appearance-none accent-cyan-500"
+                                />
+                            </div>
+
+                            <div className="pt-8 border-t border-white/5">
+                                <button
+                                    onClick={() => setShowDebugVision(!showDebugVision)}
+                                    className={`w-full py-3 rounded-xl font-bold text-xs uppercase tracking-widest transition-all ${showDebugVision ? 'bg-cyan-500 text-black' : 'bg-white/5 text-gray-400'}`}
+                                >
+                                    {showDebugVision ? 'Vision Mode: ON' : 'Vision Mode: OFF'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-            </footer>
-        </div>
+            )}
+
+            {/* Desktop-Only Footer (Hidden on Mobile) */}
+            <div className="hidden md:block mt-12 lg:mt-24 px-4">
+                {/* Only show on large screens if strictly needed, or just remove entirely for mobile-first focus */}
+            </div>
+        </div >
     );
 }
